@@ -1,13 +1,12 @@
-//sk03: Bouncing ball with a Ball class
-Ball b;
+//Description will go here
+World w; 
 
 void setup(){
   size(600,400);
-  b = new Ball();
+  w = new World(600, 400, 1, 10);
 }
 
 void draw() {
   background(0);
-  b.move();
-  b.display();
+  w.update();
 }

@@ -1,0 +1,1 @@
+//Camera class to determine what subset of the world grid should be rendered
