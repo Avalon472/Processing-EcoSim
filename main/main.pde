@@ -1,12 +1,16 @@
-//Description will go here
-World w; 
+World w;
 
-void setup(){
-  size(600,400);
-  w = new World(600, 400, 1, 10);
+void setup() {
+  size(800, 800);
+  textSize(14);
+  w = new World(200, 200, 8, 18, 4, 30, 100, 100);
 }
 
 void draw() {
-  background(0);
+  background(214, 190, 140);
   w.update();
+}
+
+void keyPressed() {
+  w.handleKeyPressed(key, keyCode);
 }
