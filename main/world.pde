@@ -24,11 +24,19 @@ final int MAX_CARNIVORES = 40;
 final int MAX_CORPSES    = 30;   // dead creatures kept for inspection
 final int GRAPH_HISTORY  = 300;  // frames of pop history to display
 
+// Terrain type constants
+final int GRASSLAND = 0;
+final int BRUSH = 1;
+final int WATER = 2;
+final int ROCK = 3;
+
 class World {
   int worldWidth;
   int worldHeight;
   PVector worldSize;
   int gridSize;
+
+  int[][] terrain;  // terrain grid = every cell has a biome type
 
   ArrayList<Creature> herbivores;
   ArrayList<Creature> carnivores;
@@ -37,6 +45,17 @@ class World {
 
   boolean showRanges  = false;
   boolean paused      = false;
+
+  // terrain palette
+  color grassColor = color(134, 180, 80);
+  color brushColor = color(107, 142, 60);
+  color waterColor = color(70, 130, 180);
+  color rockColor  = color(160, 145, 120);
+
+  // plant regrowth settings
+  int   plantCap       = 60;   // max plants that can exist at once
+  int   regrowInterval = 120;  // every N frames
+  int   regrowCounter  = 0;
   boolean showGraph   = true;
 
   // Birth counters (displayed in HUD)
@@ -62,6 +81,11 @@ class World {
     worldHeight = heightUnits;
     worldSize   = new PVector(worldWidth, worldHeight);
 
+    // build the terrain 
+    terrain = new int[worldWidth][worldHeight];
+    generateTerrain();
+
+    // Collections
     herbivores       = new ArrayList<Creature>();
     carnivores       = new ArrayList<Creature>();
     plants           = new ArrayList<PVector>();
@@ -74,30 +98,106 @@ class World {
     camera = new Camera(cameraWidthUnits, cameraHeightUnits,
                         gridSize, worldWidth, worldHeight);
 
-    for (int i = 0; i < herbivoreCount; i++)
-      herbivores.add(new Creature(randomWorldPosition(), worldSize, false));
+    // spawn creatures on walkable land
+    for (int i = 0; i < herbivoreCount; i++) {
+      herbivores.add(new Creature(randomLandPosition(), worldSize, false));
+    }
 
-    for (int i = 0; i < carnivoreCount; i++)
-      carnivores.add(new Creature(randomWorldPosition(), worldSize, true));
+    for (int i = 0; i < carnivoreCount; i++) {
+      carnivores.add(new Creature(randomLandPosition(), worldSize, true));
+    }
 
-    for (int i = 0; i < plantCount; i++)
-      plants.add(randomWorldPosition());
+    // spawn plants on grass or brush only
+    for (int i = 0; i < plantCount; i++) {
+      plants.add(randomPlantPosition());
+    }
+  }
+
+  // Terrain generation
+  void generateTerrain() {
+    float scale = 0.035;          // bigger = smaller blobs
+    float offsetX = random(1000); // random seed so every run is unique
+    float offsetY = random(1000);
+
+    for (int x = 0; x < worldWidth; x++) {
+      for (int y = 0; y < worldHeight; y++) {
+        float n = noise((x + offsetX) * scale, (y + offsetY) * scale);
+
+        if (n < 0.30) {
+          terrain[x][y] = WATER;
+        } else if (n < 0.55) {
+          terrain[x][y] = GRASSLAND;
+        } else if (n < 0.75) {
+          terrain[x][y] = BRUSH;
+        } else {
+          terrain[x][y] = ROCK;
+        }
+      }
+    }
+  }
+
+  // Terrain Rendering
+  void drawTerrain() {
+    noStroke();
+
+    int startX = camera.x;
+    int startY = camera.y;
+    int endX   = min(camera.x + camera.cols, worldWidth);
+    int endY   = min(camera.y + camera.rows, worldHeight);
+
+    for (int gx = startX; gx < endX; gx++) {
+      for (int gy = startY; gy < endY; gy++) {
+        int screenX = (gx - camera.x) * camera.cellSize;
+        int screenY = (gy - camera.y) * camera.cellSize;
+
+        switch (terrain[gx][gy]) {
+          case GRASSLAND: fill(grassColor); break;
+          case BRUSH:     fill(brushColor); break;
+          case WATER:     fill(waterColor); break;
+          case ROCK:      fill(rockColor);  break;
+        }
+
+        rect(screenX, screenY, camera.cellSize, camera.cellSize);
+      }
+    }
+  }
+
+  // Terrain query helpers
+  int getTerrainAt(float wx, float wy) {
+    int gx = constrain(int(wx), 0, worldWidth  - 1);
+    int gy = constrain(int(wy), 0, worldHeight - 1);
+    return terrain[gx][gy];
+  }
+
+  boolean isWalkable(float wx, float wy) {
+    return getTerrainAt(wx, wy) != WATER;
   }
 
   // ── Main update / render loop ─────────────────────────────────
   void update() {
     if (!paused) {
       updateCreatures();
+      updatePlantRegrowth();
       flushPending();
       pruneCorpses();
       recordHistory();
     }
 
+    drawTerrain();    // biome colred tiles
     camera.drawGrid();
     drawPlants();
     drawCreatures();
     drawHUD();
     if (showGraph) drawGraph();
+  }
+
+  // Plant Regrowth
+  void updatePlantRegrowth() {
+    regrowCounter++;
+    if (regrowCounter >= regrowInterval && plants.size() < plantCap) {
+      plants.add(randomPlantPosition());
+      regrowCounter = 0;
+    }
   }
 
   // ── Entity updates ────────────────────────────────────────────
@@ -218,7 +318,11 @@ class World {
   }
 
   void consumePlant(PVector plant) {
-    if (plant == null) return;
+    if (plant == null) {
+      return;
+    }
+
+    plant.set(randomPlantPosition());
     plant.set(randomWorldPosition());
   }
 
@@ -355,5 +459,29 @@ class World {
 
   PVector randomWorldPosition() {
     return new PVector(random(worldWidth), random(worldHeight));
+  }
+
+  // random position on any non-water tile
+  PVector randomLandPosition() {
+    PVector pos;
+    int attempts = 0;
+    do {
+      pos = new PVector(random(worldWidth), random(worldHeight));
+      attempts++;
+    } while (!isWalkable(pos.x, pos.y) && attempts < 500);
+    return pos;
+  }
+
+  // random position on grassland or brush only (for plants)
+  PVector randomPlantPosition() {
+    PVector pos;
+    int t;
+    int attempts = 0;
+    do {
+      pos = new PVector(random(worldWidth), random(worldHeight));
+      t = getTerrainAt(pos.x, pos.y);
+      attempts++;
+    } while (t != GRASSLAND && t != BRUSH && attempts < 500);
+    return pos;
   }
 }
