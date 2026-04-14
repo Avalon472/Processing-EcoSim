@@ -28,7 +28,40 @@ class Creature {
     wanderAngle = random(TWO_PI);
     state = "WANDER";
   }
-
+  //Perception syatem (Added by Mansa)
+  //This function handles how a creature detects nearby entities and decides what actioon to take(flee,seek,chase,wander)
+  void perceive(World world){
+    if(!predator) {
+      //check for nearby predator(danger)
+      Creature danger = world.findNearestCreature(position, world.carnivores, lifecycle.detectionRange);
+      //check for nearby food(plants)
+      PVector food = world.findNearestPlant(position, lifecycle.detectionRange);
+      
+      if (danger != null) {
+        state = "FLEE";
+        flee(danger.position);
+      }
+      else if (food != null){
+        state = "SEEK";
+        seek(food);
+      }
+      else {
+        state = "WANDER";
+        wander();
+      }
+    } else {
+      Creature prey = world.findNearestCreature(position, world.herbivores, lifecycle.detectionRange);
+      
+      if (prey != null) {
+        state = "CHASE";
+        seek(prey.position);
+      } else {
+        state = "WANDER";
+        wander();
+      }
+    }
+  }
+  
   void update(World world) {
     if (!lifecycle.alive) {
       state = "DEAD";
@@ -36,7 +69,10 @@ class Creature {
       acceleration.mult(0);
       return;
     }
-
+    
+    perceive(world);
+//Here everything was mixed together 
+/*
     if (predator) {
       Creature nearestPrey = world.findNearestCreature(position, world.herbivores, lifecycle.detectionRange);
 
@@ -73,7 +109,7 @@ class Creature {
         lifecycle.changeEnergy(energyValue);
       }
     }
-
+*/
     velocity.add(acceleration);
     velocity.limit(lifecycle.maxSpeed);
     position.add(velocity);
