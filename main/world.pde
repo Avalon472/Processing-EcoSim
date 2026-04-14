@@ -58,16 +58,16 @@ class World {
 
     // spawn creatures on walkable land
     for (int i = 0; i < herbivoreCount; i++) {
-      herbivores.add(new Creature(randomWorldPosition(), worldSize, false));
+      herbivores.add(new Creature(randomLandPosition(), worldSize, false));
     }
 
     for (int i = 0; i < carnivoreCount; i++) {
-      carnivores.add(new Creature(randomWorldPosition(), worldSize, true));
+      carnivores.add(new Creature(randomLandPosition(), worldSize, true));
     }
 
     // spawn plants on grass or brush only
     for (int i = 0; i < plantCount; i++) {
-      plants.add(randomWorldPosition());
+      plants.add(randomPlantPosition());
     }
   }
 
@@ -173,6 +173,7 @@ class World {
       }
 
       PVector sp = camera.worldToScreen(plant);
+      // small tree look: trunk + canopy
       fill(100, 70, 40);
       rect(sp.x - 1, sp.y, 2, 5);
       fill(34, 120, 34);
@@ -197,7 +198,7 @@ class World {
 
     int livingH = countAlive(herbivores);
     int livingC = countAlive(carnivores);
-
+    
     fill(255);
     text("Processing EcoSim", 20, 30);
     text("Arrow keys = move camera", 20, 50);
@@ -271,6 +272,7 @@ class World {
     }
 
     plant.set(randomPlantPosition());
+    plant.set(randomWorldPosition());
   }
 
   void handleKeyPressed(char pressedKey, int pressedKeyCode) {
