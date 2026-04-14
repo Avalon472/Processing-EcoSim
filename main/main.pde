@@ -1,9 +1,14 @@
+// ============================================================
+//  EcoSim – main.pde
+//  Entry point: setup / draw / key forwarding
+// ============================================================
+
 World w;
 
 void setup() {
   size(800, 800);
-  textSize(14);
-  w = new World(200, 200, 8, 18, 4, 30, 100, 100);
+  textSize(12);
+  w = new World(200, 200, 8, 70, 30, 120, 100, 100);
 }
 
 void draw() {
