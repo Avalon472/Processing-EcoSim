@@ -21,6 +21,7 @@ class LifecycleSystem {
   float reproductionCost;
   float mateRange;           // how close two creatures must be to breed
   boolean alive = true;
+  float hunger;
 
   // ── Randomised constructor (new creatures / initial spawn) ────
   LifecycleSystem(int initEnergy, boolean predator) {
@@ -34,17 +35,17 @@ class LifecycleSystem {
       detectionRange = random(22,    34);
     } else {
       // Herbivores: slower, leaner metabolism, shorter sight
-      metabolism     = random(0.030, 0.050);
+      metabolism     = random(0.020, 0.040);
       maxSpeed       = random(0.07,  0.11);
       maxForce       = random(0.006, 0.010);
       detectionRange = random(16,    26);
     }
 
     reproductionThreshold = 75;   // energy needed to attempt mating
-    reproductionCost      = 30;   // energy spent per parent on birth
-    mateRange             = 1.8;  // world-units
+    reproductionCost      = 25;   // energy spent per parent on birth
+    mateRange             = 2.25;  // world-units
 
-    energy = constrain(initEnergy, 10, maxEnergy);
+    energy = constrain(initEnergy, maxEnergy*3/4, maxEnergy);
   }
 
   // ── Explicit constructor (used by crossbreed()) ───────────────

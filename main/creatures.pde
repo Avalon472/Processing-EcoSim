@@ -25,6 +25,8 @@ class Creature {
 
   float energyValue;      // energy gained when this creature is eaten / eats
   float wanderAngle;
+  float boundaryTurn;
+  float panicAngle;
 
   boolean predator;
   String  state;
@@ -45,6 +47,8 @@ class Creature {
 
     energyValue  = predator ? 35 : 20;
     wanderAngle  = random(TWO_PI);
+    boundaryTurn = random(TWO_PI/4);
+    panicAngle = random(TWO_PI/8);
     state        = "WANDER";
   }
 
@@ -89,6 +93,7 @@ class Creature {
     keepInBounds();
 
     lifecycle.changeEnergy(-lifecycle.metabolism);
+    lifecycle.hunger = 1 - (lifecycle.energy/lifecycle.maxEnergy);
     if (lifecycle.energy <= 0) {
       lifecycle.die();
       state = "DEAD";
@@ -101,7 +106,7 @@ class Creature {
     // Priority 1: Reproduce (when well-fed)
     if (lifecycle.canReproduce()) {
       Creature mate = world.findNearestReadyMate(position, world.carnivores, this,
-                                                  lifecycle.detectionRange*2);
+                                                  lifecycle.detectionRange);
       if (mate != null) {
         state = "REPRODUCE";
         seek(mate.position);
@@ -115,8 +120,8 @@ class Creature {
 
     // Priority 2: Chase prey
     Creature nearestPrey = world.findNearestCreature(position, world.herbivores,
-                                                      lifecycle.detectionRange);
-    if (nearestPrey != null) {
+                                                      lifecycle.detectionRange * (1 + lifecycle.hunger));
+    if (nearestPrey != null && lifecycle.hunger > 0.25) {
       state = "CHASE";
       seek(nearestPrey.position);
 
@@ -138,7 +143,8 @@ class Creature {
     // Priority 1: Flee predators (always overrides everything)
     Creature nearestPredator = world.findNearestCreature(position, world.carnivores,
                                                           lifecycle.detectionRange);
-    if (nearestPredator != null) {
+    PVector nearestPlant = world.findNearestPlant(position, lifecycle.detectionRange * (1 + lifecycle.hunger));
+    if (nearestPredator != null && ((nearestPlant != null && PVector.dist(position, nearestPredator.position) < PVector.dist(position,nearestPlant) + 5) || nearestPlant == null)) {
       state = "FLEE";
       flee(nearestPredator.position);
       return;
@@ -147,7 +153,7 @@ class Creature {
     // Priority 2: Reproduce (when well-fed and no predators nearby)
     if (lifecycle.canReproduce()) {
       Creature mate = world.findNearestReadyMate(position, world.herbivores, this,
-                                                  lifecycle.detectionRange*2);
+                                                  lifecycle.detectionRange);
       if (mate != null) {
         state = "REPRODUCE";
         seek(mate.position);
@@ -160,8 +166,7 @@ class Creature {
     }
 
     // Priority 3: Seek food
-    PVector nearestPlant = world.findNearestPlant(position, lifecycle.detectionRange);
-    if (nearestPlant != null) {
+    if (nearestPlant != null && lifecycle.hunger > 0.25) {
       state = "SEEK";
       seek(nearestPlant);
 
@@ -275,6 +280,7 @@ class Creature {
     PVector desired = PVector.sub(position, threat);
     if (desired.magSq() == 0) return;
     desired.normalize();
+    desired.rotate(panicAngle);
     desired.mult(lifecycle.maxSpeed);
     PVector steer = PVector.sub(desired, velocity);
     steer.limit(lifecycle.maxForce * 1.3);
@@ -295,13 +301,25 @@ class Creature {
   }
 
   void keepInBounds() {
-    float ef = 0.03;
-    if (position.x < 3)                  applyForce(new PVector( ef,  0));
-    if (position.x > boundaries.x - 3)   applyForce(new PVector(-ef,  0));
-    if (position.y < 3)                  applyForce(new PVector(  0, ef));
-    if (position.y > boundaries.y - 3)   applyForce(new PVector(  0,-ef));
-    position.x = constrain(position.x, 0, boundaries.x - 0.01);
-    position.y = constrain(position.y, 0, boundaries.y - 0.01);
+    float ef = 0.045;
+    if (position.x < 3) {
+      applyForce(new PVector( ef,  0));
+      velocity.rotate(boundaryTurn);
+    }
+    if (position.x > boundaries.x - 3){
+      applyForce(new PVector(-ef,  0));
+      velocity.rotate(boundaryTurn);
+    }
+      if (position.y < 3) {
+      applyForce(new PVector( 0,  ef));
+      velocity.rotate(boundaryTurn);
+    }
+    if (position.y > boundaries.y - 3){
+      applyForce(new PVector(0,  -ef));
+      velocity.rotate(boundaryTurn);
+    }
+    position.x = constrain(position.x, 1, boundaries.x - 1);
+    position.y = constrain(position.y, 1, boundaries.y - 1);
   }
 
   boolean isCloseTo(PVector target, float radius) {

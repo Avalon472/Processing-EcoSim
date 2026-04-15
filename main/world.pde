@@ -372,7 +372,7 @@ class World {
     text(avgStatsLabel(carnivores), 20, 170);
 
     text("Camera: (" + camera.x + ", " + camera.y + ")", 20, 190);
-    text("Repro threshold: 75 energy  |  Cost: 30 / parent", 20, 206);
+    text("Repro threshold: 75 energy  |  Cost: 25 / parent", 20, 206);
   }
 
   String avgStatsLabel(ArrayList<Creature> list) {
@@ -386,7 +386,7 @@ class World {
       n++;
     }
     if (n == 0) return "  (none alive)";
-    return String.format("  spd:%.3f  met:%.3f  det:%.1f",
+    return String.format("  speed:%.3f  metabolism:%.3f  detection range:%.1f",
       sumSpd/n, sumMet/n, sumDet/n);
   }
 
@@ -398,7 +398,7 @@ class World {
 
     fill(0, 160);
     noStroke();
-    rect(gx - 5, gy - gh - 5, GRAPH_HISTORY + 10, gh + 30, 4);
+    rect(gx - 5, gy - gh - 15, GRAPH_HISTORY + 10, gh + 30, 4);
 
     fill(180);
     textSize(10);
@@ -478,7 +478,7 @@ class World {
     int t;
     int attempts = 0;
     do {
-      pos = new PVector(random(worldWidth), random(worldHeight));
+      pos = new PVector(random(50, worldWidth-50), random(50, worldHeight-50));
       t = getTerrainAt(pos.x, pos.y);
       attempts++;
     } while (t != GRASSLAND && t != BRUSH && attempts < 500);
