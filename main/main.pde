@@ -1,9 +1,23 @@
+// ============================================================
+//  EcoSim – main.pde
+//  Entry point: setup / draw / key forwarding
+// ============================================================
+
 World w;
 
 void setup() {
   size(800, 800);
-  textSize(14);
-  w = new World(200, 200, 8, 18, 4, 30, 100, 100);
+  textSize(12);
+  int worldWidth = 200;
+  int worldHeight = 200;
+  int gridSize = 8;
+  int initHerbivore = 70;
+  int initCarnivore = 30;
+  int initPlant = 120;
+  int cameraWidth = 100;
+  int cameraHeight = 100;
+
+  w = new World(worldWidth, worldHeight, gridSize, initHerbivore, initCarnivore, initPlant, cameraWidth, cameraHeight);
 }
 
 void draw() {

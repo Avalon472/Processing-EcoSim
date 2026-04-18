@@ -1,3 +1,29 @@
+// ============================================================
+//  EcoSim – world.pde
+//  World: entity collections, update loop, rendering helpers,
+//  reproduction, population graph, HUD.
+//
+//  CHANGES FROM ORIGINAL:
+//   - findNearestReadyMate(): finds a same-species creature that
+//     also has enough energy to mate, excluding self.
+//   - spawnOffspring(): deducts reproductionCost from both
+//     parents, crossbreeds their LifecycleSystems, and inserts
+//     the child into the appropriate list. Births are capped so
+//     the simulation doesn't explode.
+//   - Dead creatures are pruned after exceeding MAX_CORPSES so
+//     memory doesn't grow unbounded.
+//   - Population history tracked for a scrolling side graph.
+//   - HUD extended: shows per-stat averages and birth counts.
+//   - handleKey() renamed from handleKeyPressed() to match
+//     original; alias kept for compatibility.
+// ============================================================
+
+// ── Global population caps ────────────────────────────────────
+final int MAX_HERBIVORES = 80;
+final int MAX_CARNIVORES = 40;
+final int MAX_CORPSES    = 30;   // dead creatures kept for inspection
+final int GRAPH_HISTORY  = 300;  // frames of pop history to display
+
 // Terrain type constants
 final int GRASSLAND = 0;
 final int BRUSH = 1;
@@ -14,11 +40,11 @@ class World {
 
   ArrayList<Creature> herbivores;
   ArrayList<Creature> carnivores;
-  ArrayList<PVector> plants;
+  ArrayList<PVector>  plants;
   Camera camera;
 
-  boolean showRanges = false;
-  boolean paused = false;
+  boolean showRanges  = false;
+  boolean paused      = false;
 
   // terrain palette
   color grassColor = color(134, 180, 80);
@@ -30,31 +56,47 @@ class World {
   int   plantCap       = 60;   // max plants that can exist at once
   int   regrowInterval = 120;  // every N frames
   int   regrowCounter  = 0;
+  boolean showGraph   = true;
 
-  World(
-    int widthUnits,
-    int heightUnits,
-    int unitSize,
-    int herbivoreCount,
-    int carnivoreCount,
-    int plantCount,
-    int cameraWidthUnits,
-    int cameraHeightUnits
-  ) {
-    gridSize = unitSize;
-    worldWidth = widthUnits;
+  // Birth counters (displayed in HUD)
+  int herbBirths = 0;
+  int carnBirths = 0;
+
+  // Pending offspring queued during update to avoid
+  // ConcurrentModificationException mid-loop
+  ArrayList<Creature> pendingHerbivores;
+  ArrayList<Creature> pendingCarnivores;
+
+  // Population history for scrolling graph
+  int[] herbHistory;
+  int[] carnHistory;
+  int   historyHead = 0;
+
+  World(int widthUnits, int heightUnits, int unitSize,
+        int herbivoreCount, int carnivoreCount, int plantCount,
+        int cameraWidthUnits, int cameraHeightUnits) {
+
+    gridSize    = unitSize;
+    worldWidth  = widthUnits;
     worldHeight = heightUnits;
-    worldSize = new PVector(worldWidth, worldHeight);
+    worldSize   = new PVector(worldWidth, worldHeight);
 
     // build the terrain 
     terrain = new int[worldWidth][worldHeight];
     generateTerrain();
 
     // Collections
-    herbivores = new ArrayList<Creature>();
-    carnivores = new ArrayList<Creature>();
-    plants = new ArrayList<PVector>();
-    camera = new Camera(cameraWidthUnits, cameraHeightUnits, gridSize, worldWidth, worldHeight);
+    herbivores       = new ArrayList<Creature>();
+    carnivores       = new ArrayList<Creature>();
+    plants           = new ArrayList<PVector>();
+    pendingHerbivores = new ArrayList<Creature>();
+    pendingCarnivores = new ArrayList<Creature>();
+
+    herbHistory = new int[GRAPH_HISTORY];
+    carnHistory = new int[GRAPH_HISTORY];
+
+    camera = new Camera(cameraWidthUnits, cameraHeightUnits,
+                        gridSize, worldWidth, worldHeight);
 
     // spawn creatures on walkable land
     for (int i = 0; i < herbivoreCount; i++) {
@@ -131,10 +173,14 @@ class World {
     return getTerrainAt(wx, wy) != WATER;
   }
 
+  // ── Main update / render loop ─────────────────────────────────
   void update() {
     if (!paused) {
       updateCreatures();
       updatePlantRegrowth();
+      flushPending();
+      pruneCorpses();
+      recordHistory();
     }
 
     drawTerrain();    // biome colred tiles
@@ -142,6 +188,7 @@ class World {
     drawPlants();
     drawCreatures();
     drawHUD();
+    if (showGraph) drawGraph();
   }
 
   // Plant Regrowth
@@ -153,116 +200,120 @@ class World {
     }
   }
 
+  // ── Entity updates ────────────────────────────────────────────
   void updateCreatures() {
-    for (Creature herbivore : herbivores) {
-      herbivore.update(this);
-    }
-
-    for (Creature carnivore : carnivores) {
-      carnivore.update(this);
-    }
+    for (Creature h : herbivores) h.update(this);
+    for (Creature c : carnivores) c.update(this);
   }
 
-  void drawPlants() {
-    noStroke();
-    fill(70, 150, 70);
+  // Add queued offspring now that iteration is complete
+  void flushPending() {
+    for (Creature c : pendingHerbivores) herbivores.add(c);
+    for (Creature c : pendingCarnivores) carnivores.add(c);
+    pendingHerbivores.clear();
+    pendingCarnivores.clear();
+  }
 
-    for (PVector plant : plants) {
-      if (!camera.isVisible(plant)) {
-        continue;
+  // Remove excess dead creatures to keep list sizes bounded
+  void pruneCorpses() {
+    pruneList(herbivores, MAX_CORPSES);
+    pruneList(carnivores, MAX_CORPSES);
+  }
+
+  void pruneList(ArrayList<Creature> list, int maxDead) {
+    int dead = 0;
+    for (int i = list.size() - 1; i >= 0; i--) {
+      if (!list.get(i).lifecycle.alive) {
+        dead++;
+        if (dead > maxDead) list.remove(i);
       }
-
-      PVector sp = camera.worldToScreen(plant);
-      // small tree look: trunk + canopy
-      fill(100, 70, 40);
-      rect(sp.x - 1, sp.y, 2, 5);
-      fill(34, 120, 34);
-      ellipse(sp.x, sp.y - 1, 9, 9);
     }
   }
 
-  void drawCreatures() {
-    for (Creature herbivore : herbivores) {
-      herbivore.draw(camera, showRanges);
-    }
-
-    for (Creature carnivore : carnivores) {
-      carnivore.draw(camera, showRanges);
-    }
+  void recordHistory() {
+    herbHistory[historyHead] = countAlive(herbivores);
+    carnHistory[historyHead] = countAlive(carnivores);
+    historyHead = (historyHead + 1) % GRAPH_HISTORY;
   }
 
-  void drawHUD() {
-    fill(0, 160);
-    noStroke();
-    rect(10, 10, 310, 215);
+  // ── Reproduction ──────────────────────────────────────────────
+  // Called from Creature when two ready mates overlap.
+  // Both parents pay the energy cost; a child is queued.
+  void spawnOffspring(Creature parentA, Creature parentB,
+                      ArrayList<Creature> list) {
+    // Sanity – both parents must still be alive and willing
+    if (!parentA.lifecycle.canReproduce() ||
+        !parentB.lifecycle.canReproduce()) return;
 
-    int livingH = countAlive(herbivores);
-    int livingC = countAlive(carnivores);
-    
-    fill(255);
-    text("Processing EcoSim", 20, 30);
-    text("Arrow keys = move camera", 20, 50);
-    text("R = toggle detection ranges", 20, 70);
-    text("P = pause simulation", 20, 90);
-    text("Herbivores seek plants and flee carnivores", 20, 110);
-    text("Carnivores chase herbivores", 20, 130);
-    text("Alive: " + livingH + " herbivores, " + livingC + " carnivores", 20, 150);
-    text("Plants: " + plants.size(), 20, 170);
-    text("Camera: (" + camera.x + ", " + camera.y + ")", 20, 190);
+    // Population cap
+    if (list == herbivores && countAlive(herbivores) >= MAX_HERBIVORES) return;
+    if (list == carnivores && countAlive(carnivores) >= MAX_CARNIVORES) return;
 
-    // terrain legend
-    int legendY = 220;
-    fill(0, 160);
-    noStroke();
-    rect(10, legendY - 5, 170, 80);
+    // Deduct energy from parents
+    parentA.lifecycle.changeEnergy(-parentA.lifecycle.reproductionCost);
+    parentB.lifecycle.changeEnergy(-parentB.lifecycle.reproductionCost);
 
-    fill(255);
-    text("Terrain:", 20, legendY + 10);
+    // Child spawns at midpoint between parents
+    PVector childPos = PVector.lerp(parentA.position, parentB.position, 0.5);
 
-    fill(grassColor); noStroke(); rect(20, legendY + 18, 10, 10);
-    fill(255);  text("Grassland", 35, legendY + 27);
+    // Build crossbred genome
+    LifecycleSystem childLife =
+      crossbreed(parentA.lifecycle, parentB.lifecycle);
 
-    fill(brushColor); noStroke(); rect(100, legendY + 18, 10, 10);
-    fill(255);  text("Brush", 115, legendY + 27);
+    Creature child = new Creature(childPos, worldSize,
+                                  parentA.predator, childLife);
 
-    fill(waterColor); noStroke(); rect(20, legendY + 38, 10, 10);
-    fill(255);  text("Water", 35, legendY + 47);
+    // Queue to avoid modifying lists during iteration
+    if (list == herbivores) {
+      pendingHerbivores.add(child);
+      herbBirths++;
+    } else {
+      pendingCarnivores.add(child);
+      carnBirths++;
+    }
 
-    fill(rockColor); noStroke(); rect(100, legendY + 38, 10, 10);
-    fill(255);  text("Rock", 115, legendY + 47);
+    // Force parents back to WANDER so they don't immediately try
+    // to mate again (energy gate re-applies naturally)
+    parentA.state = "WANDER";
+    parentB.state = "WANDER";
   }
 
+  // ── Spatial queries ───────────────────────────────────────────
   PVector findNearestPlant(PVector from, float range) {
     PVector best = null;
     float bestDist = range;
-
     for (PVector plant : plants) {
       float d = PVector.dist(from, plant);
-      if (d < bestDist) {
-        bestDist = d;
-        best = plant;
-      }
+      if (d < bestDist) { bestDist = d; best = plant; }
     }
-
     return best;
   }
 
-  Creature findNearestCreature(PVector from, ArrayList<Creature> list, float range) {
+  Creature findNearestCreature(PVector from, ArrayList<Creature> list,
+                                float range) {
     Creature best = null;
     float bestDist = range;
-
-    for (Creature creature : list) {
-      if (!creature.lifecycle.alive) {
-        continue;
-      }
-
-      float d = PVector.dist(from, creature.position);
-      if (d < bestDist) {
-        bestDist = d;
-        best = creature;
-      }
+    for (Creature c : list) {
+      if (!c.lifecycle.alive) continue;
+      float d = PVector.dist(from, c.position);
+      if (d < bestDist) { bestDist = d; best = c; }
     }
+    return best;
+  }
 
+  // Finds the nearest alive, reproduction-ready creature in list
+  // that is not the caller itself.
+  Creature findNearestReadyMate(PVector from, ArrayList<Creature> list,
+                                 Creature self, float range) {
+    Creature best = null;
+    float bestDist = range;
+    for (Creature c : list) {
+      if (c == self) continue;
+      if (!c.lifecycle.alive) continue;
+      if (!c.lifecycle.canReproduce()) continue;
+      float d = PVector.dist(from, c.position);
+      if (d < bestDist) { bestDist = d; best = c; }
+    }
     return best;
   }
 
@@ -275,39 +326,135 @@ class World {
     plant.set(randomWorldPosition());
   }
 
-  void handleKeyPressed(char pressedKey, int pressedKeyCode) {
-    if (pressedKeyCode == LEFT) {
-      camera.move(-2, 0);
-    }
-    if (pressedKeyCode == RIGHT) {
-      camera.move(2, 0);
-    }
-    if (pressedKeyCode == UP) {
-      camera.move(0, -2);
-    }
-    if (pressedKeyCode == DOWN) {
-      camera.move(0, 2);
-    }
-
-    if (pressedKey == 'r' || pressedKey == 'R') {
-      showRanges = !showRanges;
-    }
-
-    if (pressedKey == 'p' || pressedKey == 'P') {
-      paused = !paused;
+  // ── Drawing ───────────────────────────────────────────────────
+  void drawPlants() {
+    noStroke();
+    fill(70, 150, 70);
+    for (PVector plant : plants) {
+      if (!camera.isVisible(plant)) continue;
+      PVector sp = camera.worldToScreen(plant);
+      ellipse(sp.x, sp.y, 8, 8);
     }
   }
 
-  int countAlive(ArrayList<Creature> creatures) {
-    int livingCount = 0;
+  void drawCreatures() {
+    for (Creature h : herbivores) h.draw(camera, showRanges);
+    for (Creature c : carnivores) c.draw(camera, showRanges);
+  }
 
-    for (Creature creature : creatures) {
-      if (creature.lifecycle.alive) {
-        livingCount++;
-      }
+  // ── HUD ───────────────────────────────────────────────────────
+  void drawHUD() {
+    int aH = countAlive(herbivores);
+    int aC = countAlive(carnivores);
+
+    fill(0, 170);
+    noStroke();
+    rect(10, 10, 350, 205, 6);
+
+    fill(255);
+    textSize(18);
+    text("Processing EcoSim", 20, 32);
+    textSize(15);
+    fill(200);
+    text("Arrow keys: camera  |  R: ranges  |  P: pause  |  G: graph", 20, 50);
+
+    fill(255);
+    text("Herbivores alive : " + aH +
+         "  (births: " + herbBirths + ")", 20, 72);
+    text("Carnivores alive : " + aC +
+         "  (births: " + carnBirths + ")", 20, 88);
+    text("Plants           : " + plants.size(), 20, 104);
+
+    // Average stats for each species
+    text("Herbivore avg stats: ", 20, 122);
+    text(avgStatsLabel(herbivores), 20, 138);
+    text("Carnivore avg stats: ", 20, 154);
+    text(avgStatsLabel(carnivores), 20, 170);
+
+    text("Camera: (" + camera.x + ", " + camera.y + ")", 20, 190);
+    text("Repro threshold: 75 energy  |  Cost: 25 / parent", 20, 206);
+  }
+
+  String avgStatsLabel(ArrayList<Creature> list) {
+    int n = 0;
+    float sumSpd = 0, sumMet = 0, sumDet = 0;
+    for (Creature c : list) {
+      if (!c.lifecycle.alive) continue;
+      sumSpd += c.lifecycle.maxSpeed;
+      sumMet += c.lifecycle.metabolism;
+      sumDet += c.lifecycle.detectionRange;
+      n++;
+    }
+    if (n == 0) return "  (none alive)";
+    return String.format("  speed:%.3f  metabolism:%.3f  detection range:%.1f",
+      sumSpd/n, sumMet/n, sumDet/n);
+  }
+
+  // ── Population graph (scrolling) ──────────────────────────────
+  void drawGraph() {
+    int gx = width - GRAPH_HISTORY - 15;
+    int gy = height - 80;
+    int gh = 60;
+
+    fill(0, 160);
+    noStroke();
+    rect(gx - 5, gy - gh - 15, GRAPH_HISTORY + 10, gh + 30, 4);
+
+    fill(180);
+    textSize(10);
+    text("Population (last " + GRAPH_HISTORY + " frames)", gx, gy - gh - 2);
+
+    // Find max for scaling
+    int peak = 10;
+    for (int i = 0; i < GRAPH_HISTORY; i++) {
+      peak = max(peak, herbHistory[i], carnHistory[i]);
     }
 
-    return livingCount;
+    // Draw lines
+    for (int i = 1; i < GRAPH_HISTORY; i++) {
+      int prev = (historyHead + i - 1) % GRAPH_HISTORY;
+      int curr = (historyHead + i)     % GRAPH_HISTORY;
+
+      float x0 = gx + i - 1;
+      float x1 = gx + i;
+
+      // Herbivore – blue
+      stroke(80, 140, 255, 200);
+      line(x0, gy - gh * herbHistory[prev] / (float)peak,
+           x1, gy - gh * herbHistory[curr] / (float)peak);
+
+      // Carnivore – red
+      stroke(220, 80, 80, 200);
+      line(x0, gy - gh * carnHistory[prev] / (float)peak,
+           x1, gy - gh * carnHistory[curr] / (float)peak);
+    }
+
+    noStroke();
+    fill(80, 140, 255); rect(gx, gy + 5, 10, 8);
+    fill(200); text("Herb", gx + 14, gy + 13);
+    fill(220, 80, 80); rect(gx + 50, gy + 5, 10, 8);
+    fill(200); text("Carn", gx + 64, gy + 13);
+  }
+
+  // ── Controls ──────────────────────────────────────────────────
+  void handleKeyPressed(char pressedKey, int pressedKeyCode) {
+    handleKey(pressedKey, pressedKeyCode);
+  }
+  void handleKey(char pressedKey, int pressedKeyCode) {
+    if (pressedKeyCode == LEFT)  camera.move(-4,  0);
+    if (pressedKeyCode == RIGHT) camera.move( 4,  0);
+    if (pressedKeyCode == UP)    camera.move( 0, -4);
+    if (pressedKeyCode == DOWN)  camera.move( 0,  4);
+    if (pressedKey == 'r' || pressedKey == 'R') showRanges = !showRanges;
+    if (pressedKey == 'p' || pressedKey == 'P') paused     = !paused;
+    if (pressedKey == 'g' || pressedKey == 'G') showGraph  = !showGraph;
+  }
+
+  // ── Utility ───────────────────────────────────────────────────
+  int countAlive(ArrayList<Creature> creatures) {
+    int n = 0;
+    for (Creature c : creatures) if (c.lifecycle.alive) n++;
+    return n;
   }
 
   PVector randomWorldPosition() {
@@ -331,7 +478,7 @@ class World {
     int t;
     int attempts = 0;
     do {
-      pos = new PVector(random(worldWidth), random(worldHeight));
+      pos = new PVector(random(50, worldWidth-50), random(50, worldHeight-50));
       t = getTerrainAt(pos.x, pos.y);
       attempts++;
     } while (t != GRASSLAND && t != BRUSH && attempts < 500);
