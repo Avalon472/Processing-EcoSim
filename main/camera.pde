@@ -1,17 +1,23 @@
+// ============================================================
+//  EcoSim – camera.pde
+//  Viewport movement, visibility checks, world→screen coords.
+//  (Unchanged from original.)
+// ============================================================
+
 class Camera {
   int x;
   int y;
   int cols;
   int rows;
   int cellSize;
-
   int worldCols;
   int worldRows;
 
-  Camera(int visibleCols, int visibleRows, int cellSizePixels, int maxWorldCols, int maxWorldRows) {
-    cols = visibleCols;
-    rows = visibleRows;
-    cellSize = cellSizePixels;
+  Camera(int visibleCols, int visibleRows, int cellSizePixels,
+         int maxWorldCols, int maxWorldRows) {
+    cols      = visibleCols;
+    rows      = visibleRows;
+    cellSize  = cellSizePixels;
     worldCols = maxWorldCols;
     worldRows = maxWorldRows;
     x = 0;
@@ -31,18 +37,19 @@ class Camera {
   }
 
   PVector worldToScreen(PVector worldPosition) {
-    return new PVector((worldPosition.x - x) * cellSize, (worldPosition.y - y) * cellSize);
+    return new PVector(
+      (worldPosition.x - x) * cellSize,
+      (worldPosition.y - y) * cellSize
+    );
   }
 
   void drawGrid() {
     stroke(120, 110, 95, 80);
-
-    for (int gridX = 0; gridX <= cols; gridX++) {
-      line(gridX * cellSize, 0, gridX * cellSize, rows * cellSize);
+    for (int gx = 0; gx <= cols; gx++) {
+      line(gx * cellSize, 0, gx * cellSize, rows * cellSize);
     }
-
-    for (int gridY = 0; gridY <= rows; gridY++) {
-      line(0, gridY * cellSize, cols * cellSize, gridY * cellSize);
+    for (int gy = 0; gy <= rows; gy++) {
+      line(0, gy * cellSize, cols * cellSize, gy * cellSize);
     }
   }
 }
