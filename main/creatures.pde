@@ -18,6 +18,9 @@
 // ============================================================
 
 class Creature {
+  static final int LAIR_REENTRY_COOLDOWN_FRAMES = 30 * 60;
+  static final int LAIR_MIN_STAY_FRAMES = 5 * 60;
+
   PVector position;
   PVector velocity;
   PVector acceleration;
@@ -30,6 +33,10 @@ class Creature {
 
   boolean predator;
   String  state;
+  boolean wasInCarnivoreLair;
+  int lairReentryBlockedUntilFrame;
+  int enteredLairAtFrame;
+  boolean leavingLairStartsCooldown;
 
   LifecycleSystem lifecycle;
 
@@ -50,6 +57,10 @@ class Creature {
     boundaryTurn = random(TWO_PI/4);
     panicAngle = random(TWO_PI/8);
     state        = "WANDER";
+    wasInCarnivoreLair = false;
+    lairReentryBlockedUntilFrame = 0;
+    enteredLairAtFrame = -LAIR_MIN_STAY_FRAMES;
+    leavingLairStartsCooldown = false;
   }
   //Perception syatem (Added by Mansa)
   //This function handles how a creature detects nearby entities and decides what actioon to take(flee,seek,chase,wander)
@@ -84,7 +95,6 @@ class Creature {
       }
     }
   }
-  
 
   // ── Child constructor (born via reproduction) ─────────────────
   // Receives a pre-built crossbred LifecycleSystem from World.
@@ -102,6 +112,10 @@ class Creature {
     energyValue  = predator ? 35 : 20;
     wanderAngle  = random(TWO_PI);
     state        = "WANDER";
+    wasInCarnivoreLair = false;
+    lairReentryBlockedUntilFrame = 0;
+    enteredLairAtFrame = -LAIR_MIN_STAY_FRAMES;
+    leavingLairStartsCooldown = false;
   }
 
   // ── Main update ───────────────────────────────────────────────
@@ -112,25 +126,48 @@ class Creature {
       acceleration.set(0, 0);
       return;
     }
-    
-    perceive(world);
-//Here everything was mixed together 
-/*
+
+    // Use the species-specific state machine each frame.
     if (predator) {
       updateCarnivore(world);
     } else {
       updateHerbivore(world);
     }
-*/
+
     velocity.add(acceleration);
     velocity.limit(lifecycle.maxSpeed);
     position.add(velocity);
     acceleration.mult(0);
 
     keepInBounds();
+    if (predator && world.isCarnivoreGuard(this) &&
+        !world.isInCarnivoreLair(position)) {
+      position.set(world.getCarnivoreGuardPost(this));
+      velocity.set(0, 0);
+      acceleration.set(0, 0);
+    }
+    if (predator && !world.isCarnivoreGuard(this)) {
+      boolean insideLairNow = world.isInCarnivoreLair(position);
+      if (!wasInCarnivoreLair && insideLairNow) {
+        enteredLairAtFrame = frameCount;
+        leavingLairStartsCooldown = false;
+      }
+      if (wasInCarnivoreLair && !insideLairNow) {
+        if (leavingLairStartsCooldown) {
+          lairReentryBlockedUntilFrame =
+            max(lairReentryBlockedUntilFrame, frameCount + LAIR_REENTRY_COOLDOWN_FRAMES);
+        }
+        leavingLairStartsCooldown = false;
+      }
+      wasInCarnivoreLair = insideLairNow;
+    }
 
     lifecycle.changeEnergy(-lifecycle.metabolism);
     lifecycle.hunger = 1 - (lifecycle.energy/lifecycle.maxEnergy);
+    if (predator && world.isCarnivoreGuard(this)) {
+      lifecycle.energy = lifecycle.maxEnergy;
+      lifecycle.hunger = 0;
+    }
     if (lifecycle.energy <= 0) {
       lifecycle.die();
       state = "DEAD";
@@ -140,11 +177,107 @@ class Creature {
 
   // ── Carnivore behaviour ───────────────────────────────────────
   void updateCarnivore(World world) {
-    // Priority 1: Reproduce (when well-fed)
+    Creature lairIntruder = world.findNearestHerbivoreInLair(position,
+      lifecycle.detectionRange * 1.35);
+    Creature strongestResident = world.findStrongestCarnivoreInLair();
+    boolean insideLair = world.isInCarnivoreLair(position);
+    boolean reentryOnCooldown = frameCount < lairReentryBlockedUntilFrame;
+
+    if (world.isCarnivoreGuard(this)) {
+      lifecycle.energy = lifecycle.maxEnergy;
+      PVector guardPost = world.getCarnivoreGuardPost(this);
+      state = "GUARD";
+      seek(guardPost);
+
+      if (isCloseTo(guardPost, 1.4)) {
+        velocity.mult(0.45);
+      }
+
+      if (world.isCarnivoreLairOverCapacity() && strongestResident != null &&
+          world.shouldLeaveOvercrowdedLair(strongestResident) &&
+          strongestResident.lifecycle.energy >= strongestResident.lifecycle.maxEnergy * 0.60 &&
+          frameCount - strongestResident.enteredLairAtFrame >= LAIR_MIN_STAY_FRAMES) {
+        strongestResident.beginLairExit(world, false);
+      }
+      return;
+    }
+
+    boolean tired = lifecycle.energy <= lifecycle.maxEnergy * 0.50;
+    boolean recoveringInLair =
+      insideLair && lifecycle.energy < lifecycle.maxEnergy;
+    boolean minimumStaySatisfied =
+      !insideLair || frameCount - enteredLairAtFrame >= LAIR_MIN_STAY_FRAMES;
+    boolean healthyEnoughToYieldLair =
+      lifecycle.energy >= lifecycle.maxEnergy * 0.60;
+    boolean overcrowdedResident =
+      insideLair && minimumStaySatisfied && healthyEnoughToYieldLair &&
+      world.shouldLeaveOvercrowdedLair(this);
+    boolean fullStamina =
+      lifecycle.energy >= lifecycle.maxEnergy - max(0.10, lifecycle.metabolism * 2.0);
+
+    if (overcrowdedResident) {
+      beginLairExit(world, false);
+      return;
+    }
+
+    if (insideLair && minimumStaySatisfied && fullStamina) {
+      beginLairExit(world, true);
+      return;
+    }
+
+    if (lairIntruder != null && (insideLair || recoveringInLair)) {
+      state = "DEFEND";
+      seek(lairIntruder.position);
+
+      if (isCloseTo(lairIntruder.position, 1.2)) {
+        lairIntruder.lifecycle.die();
+        lairIntruder.state = "DEAD";
+        lifecycle.changeEnergy(energyValue);
+      }
+      return;
+    }
+
+    if (insideLair && !minimumStaySatisfied) {
+      state = "REST";
+      velocity.mult(0.25);
+      if (lifecycle.energy < lifecycle.maxEnergy) {
+        lifecycle.changeEnergy(0.60);
+      }
+      return;
+    }
+
+    if (reentryOnCooldown && !insideLair) {
+      state = "ROAM";
+      wander();
+      return;
+    }
+
+    if ((!reentryOnCooldown && tired) || recoveringInLair) {
+      if (!world.isInCarnivoreRestArea(position)) {
+        state = "RETURN";
+        seek(world.carnivoreLairCenter);
+      } else {
+        lifecycle.changeEnergy(0.60);
+        if (lifecycle.energy >= lifecycle.maxEnergy && minimumStaySatisfied) {
+          beginLairExit(world, true);
+        } else {
+          state = "REST";
+          velocity.mult(0.25);
+        }
+      }
+      return;
+    }
+
+    // Priority 1: Reproduce outside the lair (when well-fed)
     if (lifecycle.canReproduce()) {
       Creature mate = world.findNearestReadyMate(position, world.carnivores, this,
                                                   lifecycle.detectionRange);
       if (mate != null) {
+        if (insideLair || world.isInCarnivoreLair(mate.position)) {
+          beginLairExit(world, false);
+          return;
+        }
+
         state = "REPRODUCE";
         seek(mate.position);
 
@@ -180,7 +313,14 @@ class Creature {
     // Priority 1: Flee predators (always overrides everything)
     Creature nearestPredator = world.findNearestCreature(position, world.carnivores,
                                                           lifecycle.detectionRange);
-    PVector nearestPlant = world.findNearestPlant(position, lifecycle.detectionRange * (1 + lifecycle.hunger));
+    PVector nearestPlant = world.findNearestPlantOutsideLair(position,
+      lifecycle.detectionRange * (1 + lifecycle.hunger));
+    if (PVector.dist(position, world.carnivoreLairCenter) <= world.carnivoreLairRadius + 2.5) {
+      state = "AVOID_LAIR";
+      flee(world.carnivoreLairCenter);
+      return;
+    }
+
     if (nearestPredator != null && ((nearestPlant != null && PVector.dist(position, nearestPredator.position) < PVector.dist(position,nearestPlant) + 5) || nearestPlant == null)) {
       state = "FLEE";
       flee(nearestPredator.position);
@@ -255,7 +395,9 @@ class Creature {
       // Energy tint: full energy = bright species colour,
       // low energy = darker / more grey
       float t = lifecycle.energy / lifecycle.maxEnergy;  // 0..1
-      if (predator) {
+      if (predator && state.equals("GUARD")) {
+        fill(lerpColor(color(190), color(255), t));
+      } else if (predator) {
         fill(lerpColor(color(100, 30, 30), color(230, 80, 80), t));
       } else {
         fill(lerpColor(color(30, 50, 120), color(80, 140, 255), t));
@@ -301,6 +443,12 @@ class Creature {
   // ── Steering behaviours ───────────────────────────────────────
   void applyForce(PVector force) {
     acceleration.add(force);
+  }
+
+  void beginLairExit(World world, boolean startCooldown) {
+    state = "LEAVE_LAIR";
+    leavingLairStartsCooldown = leavingLairStartsCooldown || startCooldown;
+    seek(world.getCarnivoreLairExitPoint(position));
   }
 
   void seek(PVector target) {

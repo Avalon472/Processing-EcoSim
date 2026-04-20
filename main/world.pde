@@ -72,6 +72,13 @@ class World {
   int[] carnHistory;
   int   historyHead = 0;
 
+  // Carnivore lair
+  PVector carnivoreLairCenter;
+  float carnivoreLairRadius = 20;
+  float carnivoreRestRadius = 12;
+  int maxCarnivoreLairResidents = 5;
+  PVector[] carnivoreGuardPosts;
+
   World(int widthUnits, int heightUnits, int unitSize,
         int herbivoreCount, int carnivoreCount, int plantCount,
         int cameraWidthUnits, int cameraHeightUnits) {
@@ -97,6 +104,10 @@ class World {
 
     camera = new Camera(cameraWidthUnits, cameraHeightUnits,
                         gridSize, worldWidth, worldHeight);
+
+    carnivoreLairCenter = findNearestLandPosition(worldWidth * 0.68,
+                                                  worldHeight * 0.34);
+    updateCarnivoreGuardPosts();
 
     // spawn creatures on walkable land
     for (int i = 0; i < herbivoreCount; i++) {
@@ -184,6 +195,7 @@ class World {
     }
 
     drawTerrain();    // biome colred tiles
+    drawCarnivoreLair();
     camera.drawGrid();
     drawPlants();
     drawCreatures();
@@ -289,6 +301,17 @@ class World {
     return best;
   }
 
+  PVector findNearestPlantOutsideLair(PVector from, float range) {
+    PVector best = null;
+    float bestDist = range;
+    for (PVector plant : plants) {
+      if (isInCarnivoreLair(plant)) continue;
+      float d = PVector.dist(from, plant);
+      if (d < bestDist) { bestDist = d; best = plant; }
+    }
+    return best;
+  }
+
   Creature findNearestCreature(PVector from, ArrayList<Creature> list,
                                 float range) {
     Creature best = null;
@@ -299,6 +322,130 @@ class World {
       if (d < bestDist) { bestDist = d; best = c; }
     }
     return best;
+  }
+
+  // Finds all alive carnivores within range, excluding self.
+  ArrayList<Creature> findNearbyCarnivores(PVector pos, float range, Creature self) {
+    ArrayList<Creature> nearby = new ArrayList<Creature>();
+
+    for (Creature c : carnivores) {
+      if (c == self) continue;
+      if (!c.lifecycle.alive) continue;
+
+      if (PVector.dist(pos, c.position) <= range) {
+        nearby.add(c);
+      }
+    }
+
+    return nearby;
+  }
+
+  boolean isInCarnivoreLair(PVector pos) {
+    return PVector.dist(pos, carnivoreLairCenter) <= carnivoreLairRadius;
+  }
+
+  boolean isInCarnivoreRestArea(PVector pos) {
+    return PVector.dist(pos, carnivoreLairCenter) <= carnivoreRestRadius;
+  }
+
+  Creature getCarnivoreGuard(int slot) {
+    int found = 0;
+    for (Creature c : carnivores) {
+      if (!c.lifecycle.alive) continue;
+      if (found == slot) return c;
+      found++;
+    }
+    return null;
+  }
+
+  boolean isCarnivoreGuard(Creature candidate) {
+    return candidate == getCarnivoreGuard(0) ||
+           candidate == getCarnivoreGuard(1);
+  }
+
+  PVector getCarnivoreGuardPost(Creature guard) {
+    if (guard == getCarnivoreGuard(0)) return carnivoreGuardPosts[0].copy();
+    return carnivoreGuardPosts[1].copy();
+  }
+
+  Creature findNearestHerbivoreInLair(PVector from, float range) {
+    Creature best = null;
+    float bestDist = range;
+
+    for (Creature h : herbivores) {
+      if (!h.lifecycle.alive) continue;
+      if (!isInCarnivoreLair(h.position)) continue;
+
+      float d = PVector.dist(from, h.position);
+      if (d < bestDist) {
+        bestDist = d;
+        best = h;
+      }
+    }
+
+    return best;
+  }
+
+  int countCarnivoreLairResidents() {
+    int count = 0;
+    for (Creature c : carnivores) {
+      if (!c.lifecycle.alive) continue;
+      if (isCarnivoreGuard(c)) continue;
+      if (!isInCarnivoreLair(c.position)) continue;
+      count++;
+    }
+    return count;
+  }
+
+  boolean isCarnivoreLairOverCapacity() {
+    return countCarnivoreLairResidents() > maxCarnivoreLairResidents;
+  }
+
+  Creature findStrongestCarnivoreInLair() {
+    Creature strongest = null;
+
+    for (Creature c : carnivores) {
+      if (!c.lifecycle.alive) continue;
+      if (isCarnivoreGuard(c)) continue;
+      if (!isInCarnivoreLair(c.position)) continue;
+
+      if (strongest == null || c.lifecycle.energy > strongest.lifecycle.energy) {
+        strongest = c;
+      }
+    }
+
+    return strongest;
+  }
+
+  boolean shouldLeaveOvercrowdedLair(Creature candidate) {
+    if (candidate == null) return false;
+    if (!candidate.lifecycle.alive) return false;
+    if (isCarnivoreGuard(candidate)) return false;
+    if (!isInCarnivoreLair(candidate.position)) return false;
+
+    ArrayList<Creature> residents = new ArrayList<Creature>();
+    for (Creature c : carnivores) {
+      if (!c.lifecycle.alive) continue;
+      if (isCarnivoreGuard(c)) continue;
+      if (!isInCarnivoreLair(c.position)) continue;
+      residents.add(c);
+    }
+
+    while (residents.size() > maxCarnivoreLairResidents) {
+      Creature strongest = residents.get(0);
+      for (Creature c : residents) {
+        if (c.lifecycle.energy > strongest.lifecycle.energy) {
+          strongest = c;
+        }
+      }
+
+      if (strongest == candidate) {
+        return true;
+      }
+      residents.remove(strongest);
+    }
+
+    return false;
   }
 
   // Finds the nearest alive, reproduction-ready creature in list
@@ -323,7 +470,6 @@ class World {
     }
 
     plant.set(randomPlantPosition());
-    plant.set(randomWorldPosition());
   }
 
   // ── Drawing ───────────────────────────────────────────────────
@@ -335,6 +481,28 @@ class World {
       PVector sp = camera.worldToScreen(plant);
       ellipse(sp.x, sp.y, 8, 8);
     }
+  }
+
+  void drawCarnivoreLair() {
+    if (!camera.isVisible(carnivoreLairCenter)) return;
+
+    PVector screenCenter = camera.worldToScreen(carnivoreLairCenter);
+    float lairDiameter = carnivoreLairRadius * 2 * camera.cellSize;
+    float restDiameter = carnivoreRestRadius * 2 * camera.cellSize;
+
+    noStroke();
+    fill(140, 55, 55, 80);
+    ellipse(screenCenter.x, screenCenter.y, lairDiameter, lairDiameter);
+    fill(180, 85, 85, 110);
+    ellipse(screenCenter.x, screenCenter.y, restDiameter, restDiameter);
+
+    stroke(120, 35, 35, 190);
+    noFill();
+    ellipse(screenCenter.x, screenCenter.y, lairDiameter, lairDiameter);
+
+    fill(255, 230, 220);
+    textSize(12);
+    text("Carnivore Lair", screenCenter.x - 36, screenCenter.y - lairDiameter * 0.55);
   }
 
   void drawCreatures() {
@@ -349,7 +517,7 @@ class World {
 
     fill(0, 170);
     noStroke();
-    rect(10, 10, 350, 205, 6);
+    rect(10, 10, 350, 220, 6);
 
     fill(255);
     textSize(18);
@@ -364,15 +532,16 @@ class World {
     text("Carnivores alive : " + aC +
          "  (births: " + carnBirths + ")", 20, 88);
     text("Plants           : " + plants.size(), 20, 104);
+    text("Carnivore lair   : 5 residents max, 2 guards defend and cull extras", 20, 120);
 
     // Average stats for each species
-    text("Herbivore avg stats: ", 20, 122);
-    text(avgStatsLabel(herbivores), 20, 138);
-    text("Carnivore avg stats: ", 20, 154);
-    text(avgStatsLabel(carnivores), 20, 170);
+    text("Herbivore avg stats: ", 20, 138);
+    text(avgStatsLabel(herbivores), 20, 154);
+    text("Carnivore avg stats: ", 20, 170);
+    text(avgStatsLabel(carnivores), 20, 186);
 
-    text("Camera: (" + camera.x + ", " + camera.y + ")", 20, 190);
-    text("Repro threshold: 75 energy  |  Cost: 25 / parent", 20, 206);
+    text("Camera: (" + camera.x + ", " + camera.y + ")", 20, 202);
+    text("Repro threshold: 75 energy  |  Cost: 25 / parent", 20, 218);
   }
 
   String avgStatsLabel(ArrayList<Creature> list) {
@@ -481,7 +650,51 @@ class World {
       pos = new PVector(random(50, worldWidth-50), random(50, worldHeight-50));
       t = getTerrainAt(pos.x, pos.y);
       attempts++;
-    } while (t != GRASSLAND && t != BRUSH && attempts < 500);
+    } while (((t != GRASSLAND && t != BRUSH) || isInCarnivoreLair(pos)) &&
+             attempts < 500);
     return pos;
+  }
+
+  PVector getCarnivoreLairExitPoint(PVector from) {
+    PVector direction = PVector.sub(from, carnivoreLairCenter);
+    if (direction.magSq() < 0.001) {
+      direction = PVector.random2D();
+    }
+
+    direction.normalize();
+    PVector target = PVector.add(carnivoreLairCenter,
+      PVector.mult(direction, carnivoreLairRadius + 8));
+    return findNearestLandPosition(target.x, target.y);
+  }
+
+  PVector findNearestLandPosition(float preferredX, float preferredY) {
+    int baseX = constrain(round(preferredX), 0, worldWidth - 1);
+    int baseY = constrain(round(preferredY), 0, worldHeight - 1);
+
+    for (int radius = 0; radius < max(worldWidth, worldHeight); radius++) {
+      for (int dx = -radius; dx <= radius; dx++) {
+        for (int dy = -radius; dy <= radius; dy++) {
+          int x = constrain(baseX + dx, 0, worldWidth - 1);
+          int y = constrain(baseY + dy, 0, worldHeight - 1);
+          if (isWalkable(x, y)) {
+            return new PVector(x, y);
+          }
+        }
+      }
+    }
+
+    return randomLandPosition();
+  }
+
+  void updateCarnivoreGuardPosts() {
+    carnivoreGuardPosts = new PVector[2];
+    carnivoreGuardPosts[0] = new PVector(
+      constrain(carnivoreLairCenter.x - carnivoreLairRadius * 0.65, 1, worldWidth - 1),
+      constrain(carnivoreLairCenter.y, 1, worldHeight - 1)
+    );
+    carnivoreGuardPosts[1] = new PVector(
+      constrain(carnivoreLairCenter.x + carnivoreLairRadius * 0.65, 1, worldWidth - 1),
+      constrain(carnivoreLairCenter.y, 1, worldHeight - 1)
+    );
   }
 }
