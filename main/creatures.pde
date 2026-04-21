@@ -134,12 +134,25 @@ class Creature {
       updateHerbivore(world);
     }
 
+    // MAP(Rikesh): steer away from nearby water Before moving
+    avoidWater(world);
+
     velocity.add(acceleration);
     velocity.limit(lifecycle.maxSpeed);
     position.add(velocity);
     acceleration.mult(0);
 
     keepInBounds();
+
+    // MAP(Rikesh): safety net: snap back if creature landed on water
+    if (!world.isWalkable(position.x, position.y)) {
+      position.sub(velocity);
+      velocity.mult(-0.5);
+      wanderAngle += PI * 0.5;
+      position.x = constrain(position.x, 1, boundaries.x - 1);
+      position.y = constrain(position.y, 1, boundaries.y - 1);
+    }
+
     if (predator && world.isCarnivoreGuard(this) &&
         !world.isInCarnivoreLair(position)) {
       position.set(world.getCarnivoreGuardPost(this));
@@ -509,5 +522,39 @@ class Creature {
 
   boolean isCloseTo(PVector target, float radius) {
     return PVector.dist(position, target) <= radius;
+  }
+
+  // MAP (Rikesh): Water avoidance, scan all directions, slide along shore
+  void avoidWater(World world) {
+    PVector totalForce = new PVector(0, 0);
+    boolean waterNearby = false;
+
+    float[] distances = {1.5, 3.0, 4.5};
+    float[][] dirs = {
+      {1, 0}, {-1, 0}, {0, 1}, {0, -1},
+      {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
+    };
+
+    for (float dist : distances) {
+      for (float[] d : dirs) {
+        float checkX = position.x + d[0] * dist;
+        float checkY = position.y + d[1] * dist;
+
+        if (!world.isWalkable(checkX, checkY)) {
+          PVector away = new PVector(position.x - checkX, position.y - checkY);
+          float strength = 1.0 / max(away.mag(), 0.5);
+          away.normalize();
+          away.mult(strength);
+          totalForce.add(away);
+          waterNearby = true;
+        }
+      }
+    }
+    if (waterNearby) {
+      acceleration.mult(0);
+      totalForce.normalize();
+      totalForce.mult(lifecycle.maxForce * 4.0);
+      applyForce(totalForce);
+    }
   }
 }

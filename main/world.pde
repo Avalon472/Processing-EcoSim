@@ -641,18 +641,35 @@ class World {
     return pos;
   }
 
-  // random position on grassland or brush only (for plants)
+  // random position on grassland or brush, not adjacent to water (Map = Rikesh)
   PVector randomPlantPosition() {
     PVector pos;
-    int t;
     int attempts = 0;
     do {
       pos = new PVector(random(50, worldWidth-50), random(50, worldHeight-50));
-      t = getTerrainAt(pos.x, pos.y);
       attempts++;
-    } while (((t != GRASSLAND && t != BRUSH) || isInCarnivoreLair(pos)) &&
+    } while ((!isGoodPlantTile(pos.x, pos.y) || isInCarnivoreLair(pos)) &&
              attempts < 500);
     return pos;
+  }
+
+  // Rejects plant spots that have water within 2 tiles (Map = Rikesh)
+  boolean isGoodPlantTile(float wx, float wy) {
+    int t = getTerrainAt(wx, wy);
+    if (t != GRASSLAND && t != BRUSH) return false;
+
+    int gx = int(wx);
+    int gy = int(wy);
+    for (int dx = -2; dx <= 2; dx++) {
+      for (int dy = -2; dy <= 2; dy++) {
+        int nx = gx + dx;
+        int ny = gy + dy;
+        if (nx >= 0 && nx < worldWidth && ny >= 0 && ny < worldHeight) {
+          if (terrain[nx][ny] == WATER) return false;
+        }
+      }
+    }
+    return true;
   }
 
   PVector getCarnivoreLairExitPoint(PVector from) {
