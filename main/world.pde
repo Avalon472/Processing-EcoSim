@@ -5,8 +5,8 @@
 // ============================================================
 
 // ── Global population caps ────────────────────────────────────
-final int MAX_HERBIVORES = 120;
-final int MAX_CARNIVORES = 50;   // combined across both lairs
+final int MAX_HERBIVORES = 140;
+final int MAX_CARNIVORES = 70;   // combined across both lairs
 final int MAX_CORPSES    = 30;
 final int GRAPH_HISTORY  = 300;
 

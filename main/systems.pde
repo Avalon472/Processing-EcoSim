@@ -23,7 +23,7 @@ class LifecycleSystem {
 
     if (predator) {
       // Carnivores: faster, hungers faster, sees farther
-      metabolism     = random(0.045, 0.070);
+      metabolism     = random(0.04, 0.06);
       maxSpeed       = random(0.10,  0.14);
       maxForce       = random(0.008, 0.013);
       detectionRange = random(22,    34);

@@ -184,8 +184,8 @@ All tuning values are at the top of their respective files and can be changed wi
 
 | Constant | Default | Effect |
 |---|---|---|
-| `MAX_HERBIVORES` | 120 | Hard cap on alive herbivores |
-| `MAX_CARNIVORES` | 50 | Hard cap on alive carnivores (both lairs combined) |
+| `MAX_HERBIVORES` | 140 | Hard cap on alive herbivores |
+| `MAX_CARNIVORES` | 70 | Hard cap on alive carnivores (both lairs combined) |
 | `MAX_CORPSES` | 30 | Max dead creatures kept before pruning |
 | `HERB_SPAWN_THRESHOLD` | 30 | Below this, edge spawning activates |
 | `HIBERNATE_RETURN_THRESHOLD` | 0.85 | Energy fraction that triggers return-to-lair |
@@ -220,4 +220,5 @@ main/
 
 - Map terrain and water avoidance — Rikesh
 - Perception system — Mansa
-- Lifecycle, reproduction, territory, and lair systems — team collaboration
+- Lifecycle, reproduction systems - Michael
+- Territory, and lair systems — Summer
